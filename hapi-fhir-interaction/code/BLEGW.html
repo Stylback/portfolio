@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>HR WebBLE Gateway</title>
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+  <script src="jqFhir.js"></script>
+</head>
+<body>
+
+<div id="HRValue" style="background-color: yellow; padding: 10pt; width: 30pt;">0</div> BPM
+
+<p>
+<button id="startBtn">Start sensor</button>
+<button id="stopBtn">Stop sensor</button>
+<button id="sendBtn" onclick="sendHRValue()">Send HR Value</button>
+</p>
+
+<script>
+
+  const val = document.getElementById('HRValue');
+  let targetDevice;
+  let serviceUART;
+  let charUARTRX;
+
+  const BLE_UART_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+  const BLE_UART_RX_CHAR = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+
+  console.log("init");
+  // const intervall = setInterval(sendHRValue, 10000);
+
+  // This function is called when the Micro:Bit sends a value to the GW App.
+  // The Micro:Bit should send the latest step counter value every 10 seconds.
+
+  function handleBLENotifications(event)
+  {
+      let result = "";
+      for (var i = 0; i < event.target.value.byteLength; i++) {
+          result += String.fromCharCode(event.target.value.getUint8(i));
+      }
+
+      console.log(result);
+
+      var values = result.split(' ');
+      val.textContent = parseInt(values[2]);
+  }
+
+  function sendHRValue()
+  {
+      console.log("Send HR Value");
+
+      const baseUrl = 'https://<HAPI-URL/fhir';
+      //Get date and time on iso-standard format
+      const date = new Date();
+      const dateISO = date.toISOString();
+
+      // Create an observation resource for heart rate
+      const observation = {
+        resourceType: 'Observation',
+        status: 'final',
+        code: {
+          coding: [
+              {
+                  system: 'http://loinc.org',
+                  code: '8867-4', // Use the appropriate LOINC code for heart rate
+                  display: 'Heart rate'
+              }
+          ],
+          text: 'Heart rate'
+        },
+        effectiveInstant: dateISO,
+        valueQuantity: {
+          value: parseFloat(val.textContent),
+          unit: 'beats/min',
+          system: 'http://unitsofmeasure.org',
+          code: '/min'
+        },
+        // Specify the patient as the subject
+        subject: {
+            reference: `Patient/1`
+        },
+        method: {
+          coding: [ {
+            code: "20811003",
+            display: "Quantitative photoplethysmography, vascular"
+          } ]
+        }
+      };
+      // Send the observation resource to the FHIR server
+      fetch(`${baseUrl}/Observation`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(observation)
+      })
+      .then(response => {
+        if (response.ok) {
+            console.log('Heart rate observation sent successfully.');
+        } else {
+            console.error('Error sending heart rate observation:', response.statusText);
+        }
+      })
+      .catch(error => {
+          console.error('Error sending heart rate observation:', error);
+      });
+};
+  
+  function startBluetooth()
+  {
+      console.log('Requesting Bluetooth Device...');
+      navigator.bluetooth.requestDevice({filters: [
+                                        {services: [BLE_UART_SERVICE]},
+                                        {namePrefix: 'BBC micro:bit '}]})
+      .then(device => {
+            console.log('Connecting to GATT Server...');
+            targetDevice = device;
+            return device.gatt.connect();
+      })
+      .then(server => {
+            console.log('Getting Service...');
+            return server.getPrimaryService(BLE_UART_SERVICE);
+      })
+      .then(service => {
+            console.log('Got service');
+            serviceUART = service;
+            return service.getCharacteristic(BLE_UART_RX_CHAR);
+      })
+      .then(characteristic => {
+            console.log('Got char');
+            charUARTRX = characteristic;
+            return charUARTRX.startNotifications();
+      })
+      .then(_ => {
+            console.log('Notifications started');
+            charUARTRX.addEventListener('characteristicvaluechanged',
+                                              handleBLENotifications);
+      })
+      .catch(error =>{
+           console.error(error);
+      });
+  }
+
+  document.getElementById('startBtn').addEventListener('click', () => {
+      startBluetooth();
+  });
+
+  document.getElementById('stopBtn').addEventListener('click', () => {
+    if (serviceUART == null) {
+      return;
+    }
+
+    charUARTRX.stopNotifications()
+    .then(_ => {
+        console.log('Notifications stopped');
+        charUARTRX.removeEventListener('characteristicvaluechanged',
+                                       handleBLENotifications);
+        serviceUART = null;
+        targetDevice.gatt.disconnect();
+    })
+    .catch(error => {
+        console.log('Argh! ' + error);
+    });
+  });
+
+</script>
+</body>
+</html>

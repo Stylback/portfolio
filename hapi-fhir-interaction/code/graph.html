@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>BPM</title>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="jqFhir.js"></script>
+</head>
+<body>
+  
+  <div id="lineChart" style="width: 1000px; height: 350px;"></div>
+  <div id="indicatorGraph" style="width: 600px; height: 400px;"></div>
+
+  <script src="https://cdn.plot.ly/plotly-2.4.2.min.js"></script>
+
+  <script type="module">
+
+    let date = new Date();
+    date.setHours(0,0,0,0)
+    
+    const baseUrl = 'https://<HAPI-URL/fhir';
+    // Define the endpoint for observations
+    const observationEndpoint = 'Observation';
+
+    // Global variables
+    var HR_arr = [];
+    var time_arr = [];
+
+    function getHRVals() {
+      const datestr = date.toISOString();
+      // FHIR fetch filter search query
+
+      //search database for patients
+      fetch(`${baseUrl}/${observationEndpoint}?patient=Patient/${1}&code=http%3A%2F%2Floinc.org%7C8867-4&date=gt${datestr}`)
+      .then(response => response.json()) // Parse the response as JSON
+      .then(data => {
+        console.log(data)
+        if (data.total == 0)
+          return;
+        
+        // Extract heart rate and time data from the data object
+        const datetime_arr = data.entry.map(entry => new Date(entry.resource.effectiveInstant));
+        const HR_vals = data.entry.map(entry => entry.resource.valueQuantity.value);
+
+        HR_arr = HR_arr.concat(HR_vals);
+        time_arr = time_arr.concat(datetime_arr);
+
+        date = new Date(datetime_arr[datetime_arr.length-1])
+
+        // Create the plot after fetching the data
+        createPlot();
+      })
+      .catch(error => {
+        console.error('Error retrieving data:', error);
+      });
+    }
+
+    // Function to create the plot
+    function createPlot() {
+
+      // Sanity check
+      console.log('Heart Rate Data:', HR_arr);
+      console.log('Time Data:', time_arr);
+
+      // Create an empty plot
+      const lineChartElem = document.getElementById('lineChart');
+      
+      const lineChartLayout = {
+        margin: { t: 50 },
+        title: 'BPM Over Time',
+        grid: { rows: 1, columns: 1 },
+      };
+
+      var lineChartData = [
+        {
+          x: time_arr,
+          y: HR_arr,
+          type: 'scatter',
+          name: 'BPM',
+        },
+      ];
+
+      Plotly.newPlot(lineChartElem, lineChartData, lineChartLayout);
+
+      // Indicator Graph
+      const indicatorGraphElem = document.getElementById('indicatorGraph');
+      var indicatorData = [
+        {
+          type: "indicator",
+          value: HR_arr[HR_arr.length-1],
+          delta: { reference:  HR_arr[HR_arr.length-2] },
+          gauge: { axis: { visible: false, range: [0, 250] } },
+          domain: { row: 0, column: 0 }
+        },
+      ];
+      var indicatorLayout = {
+        width: 600,
+        height: 400,
+        margin: { t: 25, b: 25, l: 25, r: 25 },
+        grid: { rows: 2, columns: 2, pattern: "independent" },
+        template: {
+          data: {
+            indicator: [
+              {
+                title: { text: "BPM" },
+                mode: "number+delta+gauge",
+                delta: { reference: 160 }
+              }
+            ]
+          }
+        }
+      };
+
+      Plotly.newPlot(indicatorGraphElem, indicatorData, indicatorLayout);
+    }
+
+    getHRVals();
+
+    setInterval(getHRVals,5000);
+
+    </script>
+</body>
+</html>
